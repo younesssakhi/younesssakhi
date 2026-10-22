@@ -301,8 +301,8 @@ def query(server, qname, rdtype, *, recursive=True, dnssec=False, cd=False,
             return res
         except (dns.exception.Timeout, socket.timeout, TimeoutError):
             res.rcode, res.error = "TIMEOUT", f"{how}: timeout"
-        except (OSError, urllib.error.URLError, dns.exception.DNSException, ValueError) as e:
-            res.rcode, res.error = "ERROR", f"{how}: {e}"
+        except Exception as e:  # any transport failure (bad DoH reply, proxy, reset) is just a failed probe
+            res.rcode, res.error = "ERROR", f"{how}: {type(e).__name__} {e}".strip()
     return res
 
 
@@ -453,9 +453,9 @@ def whois_lookup(domain, timeout):
         if m and m.group(1).lower() != server.lower():
             try:
                 text += "\n" + whois_raw(m.group(1), domain, timeout)
-            except OSError:
+            except Exception:
                 pass
-    except OSError:
+    except Exception:
         return None
 
     def grab(*keys):
