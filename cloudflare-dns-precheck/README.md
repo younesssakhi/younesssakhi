@@ -19,7 +19,8 @@ no delegation, ...), `0` otherwise, so it can gate a CI/CD or change pipeline.
 
 | Section | Details |
 |---|---|
-| Registrar | Registrar + IANA ID, abuse contact, created/updated/expiry (days left), EPP status, NS at registrar, DNSSEC flag. RDAP first (IANA bootstrap), WHOIS port 43 fallback. |
+| Registrar | Registrar + IANA ID, abuse contact, created/updated/expiry (days left), EPP status, NS at registrar, DNSSEC flag. RDAP and WHOIS are both queried and merged. |
+| WHOIS | Always queried (TCP/43): IANA referral -> registry WHOIS -> registrar WHOIS server. Shows registrar, registrar WHOIS server, registrar URL, registry domain ID, dates, status, name servers, DNSSEC, registrant org/country and admin/tech contacts when published, plus every parsed field and the raw text (HTML/JSON, or `--whois-raw`). Handles ICANN gTLD and ccTLD formats (.ma, .fr, .uk, ...); falls back to the system `whois` command if port 43 is blocked. |
 | Delegation | Parent (TLD) zone queried directly: NS set, parent NS TTL, glue, DS records + TTL. |
 | Authoritative NS | Per server: provider (GoDaddy, Route 53, Azure, ...), IPv4/IPv6, AA flag (lame delegation), SOA serial sync, RTT, parent vs child NS mismatch. |
 | Records by type | SOA, NS, A, AAAA, CNAME, MX, TXT, CAA, HTTPS, SVCB, DNSKEY, DS at the apex; ~40 common hosts (www, api, mail, autodiscover, ...); DMARC/DKIM/MTA-STS/BIMI/SRV records; wildcard detection. TTLs come from the authoritative servers (the configured values, not cached ones). Optional `--axfr`. |
@@ -57,6 +58,8 @@ at the registry (for NS) or the authoritative answer (other types).
 | `--only-resolvers cloudflare,google,quad9` | restrict the resolver list |
 | `--subdomain portal --subdomains-file hosts.txt` | inventory extra host names (the zone cannot be listed without AXFR) |
 | `--transport doh` | use DNS-over-HTTPS when UDP/53 is filtered (`auto` = UDP/TCP then DoH) |
+| `--whois-raw` | print the full raw WHOIS text in the terminal |
+| `--whois-server whois.registre.ma` | force a WHOIS server; `--no-whois` skips WHOIS |
 | `--axfr` | try a zone transfer to capture the full zone (only on domains you own) |
 | `--timeout 3 --workers 24` | tuning |
 
