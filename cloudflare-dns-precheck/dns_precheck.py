@@ -452,7 +452,6 @@ WHOIS_FIELDS = {
     "registrar_whois_server": ["registrar whois server", "whois server", "registrar whois"],
     "registrar_url": ["registrar url", "referral url", "registrar website", "registrar web"],
     "abuse_email": ["registrar abuse contact email", "abuse contact email", "abuse email", "abuse mailbox"],
-    "abuse_phone": ["registrar abuse contact phone", "abuse contact phone"],
     "created": ["creation date", "created", "created date", "created on", "registered on", "registration date",
                 "registration time", "domain registration date", "registered", "date de creation"],
     "updated": ["updated date", "last updated", "last update", "changed", "last modified", "updated",
@@ -463,15 +462,9 @@ WHOIS_FIELDS = {
     "status": ["domain status", "status", "state", "statut"],
     "nameservers": ["name server", "name servers", "nameserver", "nameservers", "nserver", "dns", "host name"],
     "dnssec": ["dnssec", "signed delegation"],
-    "registrant_name": ["registrant name", "registrant contact name"],
     "registrant_org": ["registrant organization", "registrant organisation", "registrant", "holder",
                        "registrant contact organisation", "titulaire"],
     "registrant_country": ["registrant country", "registrant country code", "registrant contact country"],
-    "registrant_email": ["registrant email", "registrant contact email"],
-    "admin_name": ["admin name", "administrative contact name", "admin contact name"],
-    "admin_email": ["admin email", "administrative contact email", "admin contact email"],
-    "tech_name": ["tech name", "technical contact name", "tech contact name"],
-    "tech_email": ["tech email", "technical contact email", "tech contact email"],
 }
 WHOIS_MULTI = {"status", "nameservers"}
 WHOIS_NOT_FOUND = re.compile(r"no match|not found|no entries found|no data found|domain not found|"
@@ -533,16 +526,15 @@ def parse_whois(text):
     return fields, pairs
 
 
-def whois_lookup(domain, timeout, server=None):
+def whois_lookup(domain, timeout):
     tld = domain.rsplit(".", 1)[-1]
-    out = {"servers": [], "raw": {}, "fields": {}, "all_fields": [], "error": None, "not_found": False}
-    if not server:
-        try:
-            m = re.search(r"^(?:refer|whois):\s*(\S+)", whois_raw("whois.iana.org", tld, timeout), re.M | re.I)
-            server = m.group(1) if m else None
-        except Exception:
-            server = None
-        server = server or WHOIS_SERVERS.get(tld)
+    out = {"servers": [], "fields": {}, "error": None, "not_found": False}
+    try:
+        m = re.search(r"^(?:refer|whois):\s*(\S+)", whois_raw("whois.iana.org", tld, timeout), re.M | re.I)
+        server = m.group(1) if m else None
+    except Exception:
+        server = None
+    server = server or WHOIS_SERVERS.get(tld)
     texts = []
     seen = set()
     hop = server
@@ -554,7 +546,6 @@ def whois_lookup(domain, timeout, server=None):
             out["error"] = f"{hop}: {type(e).__name__} {e}"
             break
         out["servers"].append(hop)
-        out["raw"][hop] = text
         texts.append(text)
         m = re.search(r"^\s*(?:Registrar WHOIS Server|ReferralServer|Whois Server)\s*:\s*(?:whois://|rwhois://)?([\w.-]+)",
                       text, re.M | re.I)
@@ -568,7 +559,6 @@ def whois_lookup(domain, timeout, server=None):
                                       timeout=timeout * 6).stdout
                 if text.strip():
                     out["servers"].append("system whois")
-                    out["raw"]["system whois"] = text
                     texts.append(text)
                     out["error"] = None
             except Exception as e:
@@ -576,13 +566,11 @@ def whois_lookup(domain, timeout, server=None):
     if not texts:
         out["error"] = out["error"] or "no WHOIS server found"
         return out
-    merged, allp = {}, []
+    merged = {}
     for t in texts:  # registry first, registrar answers fill the gaps
-        f, p = parse_whois(t)
-        allp += p
-        for k, v in f.items():
+        for k, v in parse_whois(t)[0].items():
             merged.setdefault(k, v)
-    out["fields"], out["all_fields"] = merged, allp
+    out["fields"] = merged
     head = texts[0][:2000]
     out["not_found"] = bool(WHOIS_NOT_FOUND.search(head)) and not merged.get("registrar")
     if WHOIS_RATE_LIMIT.search(head) and not merged:
@@ -688,10 +676,8 @@ class Audit:
         t = self.args.timeout + 5
         with cf.ThreadPoolExecutor(2) as ex:
             f_rdap = ex.submit(rdap_lookup, self.d, t)
-            f_who = ex.submit(whois_lookup, self.d, t, self.args.whois_server) if not self.args.no_whois else None
-            rdap = f_rdap.result()
-            who = f_who.result() if f_who else None
-        self.report["whois"] = who
+            f_who = ex.submit(whois_lookup, self.d, t)
+            rdap, who = f_rdap.result(), f_who.result()
         info = rdap
         if who and who.get("fields"):
             winfo = whois_to_info(who)
@@ -707,10 +693,13 @@ class Audit:
             else:
                 info = winfo
             wf = who["fields"]
-            for k in ("registrar_whois_server", "registrar_url", "registrant_org", "registrant_country"):
+            for k in ("registrar_whois_server", "registrar_url", "registry_domain_id",
+                      "registrant_org", "registrant_country"):
                 if wf.get(k):
                     info[k] = wf[k]
         self.report["registrar"] = info
+        if info:
+            info["whois_servers"] = who["servers"]
         if who and who.get("not_found"):
             self.find("CRIT", "WHOIS: domain not found",
                       f"{', '.join(who['servers'])} reports no registration for {self.d}.")
@@ -1110,9 +1099,9 @@ STATUS_COLOR = {"MATCH": "green", "PARTIAL": "yellow", "STALE": "red", "MISMATCH
 LEVEL_COLOR = {"CRIT": "red", "WARN": "yellow", "INFO": "blue"}
 
 
-def print_report(rep, show_records=True, raw_whois=False):
+def print_report(rep, show_records=True):
     reg = rep.get("registrar")
-    section("Registrar / Registration")
+    section("Registrar / WHOIS")
     if reg:
         rows = [("Registrar", f"{reg.get('registrar') or '-'}" + (f"  (IANA {reg['iana_id']})" if reg.get("iana_id") else "")),
                 ("Abuse contact", reg.get("abuse_email") or "-"),
@@ -1124,11 +1113,12 @@ def print_report(rep, show_records=True, raw_whois=False):
                 ("DNSSEC signed", {True: c("yes", "yellow"), False: "no", None: "-"}[reg.get("dnssec")]),
                 ("Registrar WHOIS", reg.get("registrar_whois_server") or "-"),
                 ("Registrar URL", reg.get("registrar_url") or "-"),
+                ("Registry domain ID", reg.get("registry_domain_id") or "-"),
+                ("Registrant", ", ".join(x for x in (reg.get("registrant_org"), reg.get("registrant_country")) if x) or "-"),
                 ("Source", reg.get("source"))]
         print("  " + table(["Field", "Value"], rows, max_col=110).replace("\n", "\n  "))
     else:
         print(c("  registration data unavailable", "yellow"))
-    print_whois(rep.get("whois"), raw=raw_whois)
 
     d = rep.get("delegation", {})
     section(f"Delegation at parent zone {d.get('parent_zone', '')}")
@@ -1174,38 +1164,6 @@ def print_report(rep, show_records=True, raw_whois=False):
     for f in rep.get("findings", []):
         print(f"  {c(f['level'].ljust(4), LEVEL_COLOR[f['level']])}  {c(f['title'], 'bold')}")
         print(c(f"        {f['detail']}", "grey"))
-
-
-WHOIS_LABELS = [("domain", "Domain"), ("registry_domain_id", "Registry domain ID"), ("registrar", "Registrar"),
-                ("registrar_iana_id", "Registrar IANA ID"), ("registrar_whois_server", "Registrar WHOIS server"),
-                ("registrar_url", "Registrar URL"), ("abuse_email", "Abuse email"), ("abuse_phone", "Abuse phone"),
-                ("created", "Created"), ("updated", "Updated"), ("expires", "Expires"), ("status", "Status"),
-                ("nameservers", "Name servers"), ("dnssec", "DNSSEC"), ("registrant_name", "Registrant"),
-                ("registrant_org", "Registrant org"), ("registrant_country", "Registrant country"),
-                ("registrant_email", "Registrant email"), ("admin_name", "Admin contact"),
-                ("admin_email", "Admin email"), ("tech_name", "Tech contact"), ("tech_email", "Tech email")]
-
-
-def print_whois(w, raw=False):
-    section("WHOIS")
-    if not w:
-        print(c("  skipped (--no-whois)", "grey"))
-        return
-    print(f"  Servers queried: {' -> '.join(w['servers']) or '-'}")
-    if w.get("error"):
-        print(c(f"  {w['error']}", "yellow"))
-    f = w.get("fields", {})
-    rows = [(label, ", ".join(f[k]) if isinstance(f[k], list) else f[k]) for k, label in WHOIS_LABELS if f.get(k)]
-    if rows:
-        print("  " + table(["Field", "Value"], rows, max_col=110).replace("\n", "\n  "))
-    elif not w.get("error"):
-        print(c("  WHOIS answered but no known fields were recognised; use --whois-raw to see the text.", "yellow"))
-    if raw:
-        for server, text in w.get("raw", {}).items():
-            print(c(f"\n  ── raw WHOIS from {server} ──", "magenta"))
-            print("  " + text.strip().replace("\n", "\n  "))
-    elif w.get("raw"):
-        print(c("  (full raw WHOIS text: --whois-raw, or in the HTML/JSON report)", "grey"))
 
 
 def print_propagation(p):
@@ -1308,10 +1266,7 @@ details summary{cursor:pointer;color:var(--muted)}pre{white-space:pre-wrap;font-
 <p style="color:var(--muted);font-size:12px">Most public resolvers are anycast; markers sit at the operator's home location while answers come from the PoP nearest the machine that ran this check.</p>
 <table id="ptable"></table></section>
 <section class="card"><h2>Cloudflare readiness findings</h2><table id="findings"></table></section>
-<section class="card"><h2>Registrar</h2><table id="registrar"></table></section>
-<section class="card"><h2>WHOIS</h2><p id="whoisinfo"></p><table id="whois"></table>
-<details><summary>All WHOIS fields</summary><table id="whoisall"></table></details>
-<details><summary>Raw WHOIS text</summary><div id="whoisraw"></div></details></section>
+<section class="card"><h2>Registrar / WHOIS</h2><table id="registrar"></table></section>
 <section class="card"><h2>Delegation &amp; authoritative name servers</h2><table id="deleg"></table><br><table id="auth"></table></section>
 <section class="card"><h2>Records by type</h2><div id="records"></div></section>
 <section class="card"><details><summary>Raw JSON</summary><pre id="raw"></pre></details></section>
@@ -1358,13 +1313,7 @@ if (window.L) {
 rows('ptable', ['Resolver','Location','IP','Status','TTL left','SOA serial','AD','ms','via','Answer'],
   [...P.results].sort((a,b)=>(a.status=='MATCH')-(b.status=='MATCH')||a.country.localeCompare(b.country)).map(r=>[esc(r.name), esc(r.city+', '+r.country), esc(r.ip||'DoH'), pill(r.status), esc(r.ttl==null?'':ttl(r.ttl)), esc(r.soa_serial), r.ad?'✓':'', esc(r.rtt_ms), esc(r.transport), (r.values.length?r.values:[r.error||'-']).map(esc).join('<br>')]));
 rows('findings', ['Level','Finding','Detail'], F.map(f=>[pill(f.level), '<b>'+esc(f.title)+'</b>', esc(f.detail)]));
-rows('registrar', ['Field','Value'], [['Registrar', esc(G.registrar)+(G.iana_id?` (IANA ${esc(G.iana_id)})`:'')], ['Abuse', esc(G.abuse_email)], ['Created', esc(G.created)], ['Updated', esc(G.updated)], ['Expires', esc(G.expires)+(G.days_to_expiry!=null?` (${G.days_to_expiry} days)`:'')], ['Status', esc((G.status||[]).join(', '))], ['NS at registrar', esc((G.nameservers||[]).join(', '))], ['Registrar WHOIS server', esc(G.registrar_whois_server)], ['Registrar URL', esc(G.registrar_url)], ['Registrant', esc([G.registrant_org, G.registrant_country].filter(Boolean).join(', ') || null)], ['Source', esc(G.source)]]);
-const W = R.whois || {}, WF = W.fields || {};
-const WL = [['domain','Domain'],['registry_domain_id','Registry domain ID'],['registrar','Registrar'],['registrar_iana_id','Registrar IANA ID'],['registrar_whois_server','Registrar WHOIS server'],['registrar_url','Registrar URL'],['abuse_email','Abuse email'],['abuse_phone','Abuse phone'],['created','Created'],['updated','Updated'],['expires','Expires'],['status','Status'],['nameservers','Name servers'],['dnssec','DNSSEC'],['registrant_name','Registrant'],['registrant_org','Registrant org'],['registrant_country','Registrant country'],['registrant_email','Registrant email'],['admin_name','Admin contact'],['admin_email','Admin email'],['tech_name','Tech contact'],['tech_email','Tech email']];
-document.getElementById('whoisinfo').innerHTML = R.whois ? `Servers queried: <code>${(W.servers||[]).map(esc).join(' → ') || '-'}</code>` + (W.error ? ` — <b>${esc(W.error)}</b>` : '') : 'WHOIS skipped (--no-whois)';
-rows('whois', ['Field','Value'], WL.filter(([k]) => WF[k]).map(([k, l]) => [l, Array.isArray(WF[k]) ? WF[k].map(esc).join('<br>') : esc(WF[k])]));
-rows('whoisall', ['Key','Value'], (W.all_fields||[]).map(([k, v]) => [esc(k), esc(v)]));
-document.getElementById('whoisraw').innerHTML = Object.entries(W.raw||{}).map(([srv, t]) => `<h3>${esc(srv)}</h3><pre>${esc(t)}</pre>`).join('') || '<p>-</p>';
+rows('registrar', ['Field','Value'], [['Registrar', esc(G.registrar)+(G.iana_id?` (IANA ${esc(G.iana_id)})`:'')], ['Abuse', esc(G.abuse_email)], ['Created', esc(G.created)], ['Updated', esc(G.updated)], ['Expires', esc(G.expires)+(G.days_to_expiry!=null?` (${G.days_to_expiry} days)`:'')], ['Status', esc((G.status||[]).join(', '))], ['NS at registrar', esc((G.nameservers||[]).join(', '))], ['Registrar WHOIS server', esc(G.registrar_whois_server)], ['Registrar URL', esc(G.registrar_url)], ['Registry domain ID', esc(G.registry_domain_id)], ['Registrant', esc([G.registrant_org, G.registrant_country].filter(Boolean).join(', ') || null)], ['Source', esc(G.source)]]);
 rows('deleg', ['Parent zone','Queried','NS TTL','DS','NS'], [[esc(D.parent_zone), esc(D.queried), ttl(D.ns_ttl), D.ds&&D.ds.length? D.ds.map(esc).join('<br>') : 'none', (D.ns||[]).map(esc).join('<br>')]]);
 rows('auth', ['Provider','IPv4','IPv6','Status','SOA serial','RTT ms','Name server'], (R.authoritative||[]).map(a=>[esc(a.provider), esc(a.ipv4.join(', ')), esc(a.ipv6.join(', ')), pill(a.status, a.status=='OK'?'MATCH':'MISMATCH'), esc(a.serial), esc(a.rtt_ms), esc(a.host)]));
 const byType = {}; (R.records||[]).forEach(r => (byType[r.type] = byType[r.type] || []).push(r));
@@ -1421,9 +1370,6 @@ def parse_args(argv=None):
     p.add_argument("--only-resolvers", help="comma-separated names/IPs to restrict the resolver list")
     p.add_argument("--subdomain", action="append", help="extra host label to inventory (repeatable)")
     p.add_argument("--subdomains-file", help="file with one host label per line to inventory")
-    p.add_argument("--no-whois", action="store_true", help="skip the WHOIS lookup (RDAP only)")
-    p.add_argument("--whois-server", help="query this WHOIS server instead of the one IANA refers to")
-    p.add_argument("--whois-raw", action="store_true", help="print the full raw WHOIS text")
     p.add_argument("--axfr", action="store_true", help="attempt a zone transfer from the authoritative servers")
     p.add_argument("--transport", choices=["auto", "udp", "doh"], default="auto",
                    help="auto = UDP/TCP 53 then DoH fallback (default)")
@@ -1467,7 +1413,7 @@ def main(argv=None):
         USE_COLOR = False
     audit = Audit(args.domain, args)
     rep = audit.run()
-    print_report(rep, show_records=not args.no_records, raw_whois=args.whois_raw)
+    print_report(rep, show_records=not args.no_records)
     save(rep, args, refresh=args.watch)
     for label, path in (("HTML", args.html), ("JSON", args.json), ("BIND", args.export_bind)):
         if path:
