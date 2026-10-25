@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>File Exchange</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <h1>File Exchange</h1>
+    <div id="who" hidden><span id="who-email"></span> <button id="logout" class="ghost">Sign out</button></div>
+  </header>
+
+  <main>
+    <!-- Sign in: email, then 6-digit code -->
+    <section id="login" class="card" hidden>
+      <h2>Sign in</h2>
+      <form id="email-form">
+        <label for="email">Email</label>
+        <input id="email" type="email" autocomplete="email" required>
+        <button type="submit">Send code</button>
+      </form>
+      <form id="code-form" hidden>
+        <p class="muted">Enter the 6-digit code sent to <b id="code-to"></b>.</p>
+        <label for="code">Code</label>
+        <input id="code" inputmode="numeric" pattern="\d{6}" maxlength="6" autocomplete="one-time-code" required>
+        <div class="row">
+          <button type="submit">Verify</button>
+          <button type="button" id="back" class="ghost">Use another email</button>
+        </div>
+      </form>
+      <p id="login-msg" class="msg"></p>
+    </section>
+
+    <!-- Owner app -->
+    <section id="app" hidden>
+      <div class="card">
+        <h2>Upload</h2>
+        <label class="drop" id="drop">
+          <input type="file" id="file-input" multiple hidden>
+          <span>Drop files here or <u>browse</u></span>
+        </label>
+        <div id="progress"></div>
+      </div>
+
+      <div class="card">
+        <div class="row between">
+          <h2>Files</h2>
+          <button id="refresh" class="ghost">Refresh</button>
+        </div>
+        <table>
+          <thead><tr><th>Name</th><th>Size</th><th>Uploaded</th><th></th></tr></thead>
+          <tbody id="files"></tbody>
+        </table>
+        <p id="empty" class="muted" hidden>No files yet.</p>
+      </div>
+
+      <div class="card">
+        <h2>Receive files from someone</h2>
+        <p class="muted">Create a link that lets anyone upload into <code>inbox/&lt;label&gt;/</code> without signing in.</p>
+        <form id="ulink-form" class="row wrap">
+          <input id="ulink-label" placeholder="Label (e.g. client name)" required>
+          <select id="ulink-hours">
+            <option value="24">24 hours</option>
+            <option value="72">3 days</option>
+            <option value="168" selected>7 days</option>
+            <option value="720">30 days</option>
+          </select>
+          <button type="submit">Create upload link</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="row between">
+          <h2>Active links</h2>
+          <button id="refresh-links" class="ghost">Refresh</button>
+        </div>
+        <table>
+          <thead><tr><th>Type</th><th>Target</th><th>Expires</th><th></th></tr></thead>
+          <tbody id="links"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Guest upload page (/u/<token>) -->
+    <section id="guest" class="card" hidden>
+      <h2>Send files</h2>
+      <p class="muted" id="guest-info"></p>
+      <label class="drop" id="guest-drop">
+        <input type="file" id="guest-input" multiple hidden>
+        <span>Drop files here or <u>browse</u></span>
+      </label>
+      <div id="guest-progress"></div>
+    </section>
+  </main>
+
+  <dialog id="share-dlg">
+    <form method="dialog" id="share-form">
+      <h3>Share <span id="share-name"></span></h3>
+      <label for="share-hours">Valid for</label>
+      <select id="share-hours">
+        <option value="1">1 hour</option>
+        <option value="24" selected>24 hours</option>
+        <option value="168">7 days</option>
+        <option value="720">30 days</option>
+      </select>
+      <label for="share-max">Max downloads (0 = unlimited)</label>
+      <input id="share-max" type="number" min="0" value="0">
+      <div class="row">
+        <button value="ok" id="share-go">Create link</button>
+        <button value="cancel" class="ghost" formnovalidate>Cancel</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" hidden></div>
+</body>
+</html>

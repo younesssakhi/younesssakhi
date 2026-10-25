@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "file-exchange",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-15",
+  "workers_dev": true,
+  "observability": { "enabled": true },
+
+  // UI files are bundled into the Worker as text.
+  "rules": [{ "type": "Text", "globs": ["**/public/*.html", "**/public/*.css", "**/public/*.js"], "fallthrough": false }],
+
+  "vars": {
+    "APP_NAME": "File Exchange",
+    // Comma-separated list of addresses allowed to sign in.
+    "ALLOWED_EMAILS": "youness.sakhi@gmail.com",
+    // Must be on a domain onboarded to Cloudflare Email Sending.
+    "MAIL_FROM": "noreply@cf-sakhi.com"
+  },
+
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "file-exchange" }],
+  "kv_namespaces": [{ "binding": "AUTH", "id": "940071ef7f4344e1982931b583da58fa" }],
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_destination_addresses": ["youness.sakhi@gmail.com"],
+      "allowed_sender_addresses": ["noreply@cf-sakhi.com"]
+    }
+  ]
+}
