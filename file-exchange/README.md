@@ -3,7 +3,8 @@
 Send and receive files through a Cloudflare Worker. Sign-in uses a one-time
 code emailed to an allow-listed address (`youness.sakhi@gmail.com`).
 
-Live: https://file-exchange.youness-sakhi.workers.dev
+Live: https://files.cf-sakhi.com (also reachable at https://file-exchange.youness-sakhi.workers.dev,
+which bypasses the zone's WAF and bot rules)
 
 ## How it works
 
